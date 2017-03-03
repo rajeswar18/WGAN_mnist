@@ -150,7 +150,7 @@ for i in range(num_epochs):
     print "training epoch",i
     for batch in iterate_minibatches(xtrain, ytrain, batchsize=128, shuffle=True):
         xtrain_batch, ytrain_batch=batch
-        z_batch=generator_input(128, NLAT)
+        z_batch=generator_input(batch_size, NLAT)
         discriminator_train_fun(xtrain_batch,z_batch)
         #print "disc_params", discriminator_params
 
