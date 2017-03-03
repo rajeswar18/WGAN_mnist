@@ -56,14 +56,14 @@ def discriminator(input_var):
 
     network = ll.DropoutLayer(network, p=0.5)
 
-    network = nn.weight_norm(dnn.Conv2DDNNLayer(network, 32, (4,4), pad='valid', W=Normal(0.05), nonlinearity=nn.lrelu))
+    network = nn.weight_norm(dnn.Conv2DDNNLayer(network, 64, (4,4), pad='valid', W=Normal(0.05), nonlinearity=nn.lrelu))
 
-    network = nn.weight_norm(dnn.Conv2DDNNLayer(network, 64, (5,5), stride=2, pad='valid', W=Normal(0.05), nonlinearity=nn.lrelu))
-    network = nn.weight_norm(dnn.Conv2DDNNLayer(network, 128, (5,5), pad='valid', W=Normal(0.05), nonlinearity=nn.lrelu))
+    network = nn.weight_norm(dnn.Conv2DDNNLayer(network, 32, (5,5), stride=2, pad='valid', W=Normal(0.05), nonlinearity=nn.lrelu))
+    network = nn.weight_norm(dnn.Conv2DDNNLayer(network, 32, (5,5), pad='valid', W=Normal(0.05), nonlinearity=nn.lrelu))
 
-    network = nn.weight_norm(dnn.Conv2DDNNLayer(network, 256, (5,5), pad='valid', W=Normal(0.05), nonlinearity=nn.lrelu))
+    network = nn.weight_norm(dnn.Conv2DDNNLayer(network, 32, (5,5), pad='valid', W=Normal(0.05), nonlinearity=nn.lrelu))
 
-    network = nn.weight_norm(dnn.Conv2DDNNLayer(network, 256, (3,3), pad='valid', W=Normal(0.05), nonlinearity=nn.lrelu))
+    network = nn.weight_norm(dnn.Conv2DDNNLayer(network, 16, (3,3), pad='valid', W=Normal(0.05), nonlinearity=nn.lrelu))
 
     network =nn.weight_norm(ll.DenseLayer(network, num_units=1, W=Normal(0.05), nonlinearity=None), train_g=True, init_stdv=0.1)
 
@@ -71,14 +71,14 @@ def discriminator(input_var):
 
 
     return network
-NLAT=256
+NLAT=128
 def generator(input_var):
     network = lasagne.layers.InputLayer(shape=(None, NLAT,1,1),
                                         input_var=input_var)
 
-    network = ll.DenseLayer(network, num_units=4*4*256, W=Normal(0.05), nonlinearity=nn.relu)
-
-    network = ll.ReshapeLayer(network, (batch_size,256,4,4))
+    network = ll.DenseLayer(network, num_units=4*4*128, W=Normal(0.05), nonlinearity=nn.relu)
+    #print(input_var.shape[0])
+    network = ll.ReshapeLayer(network, (batch_size,128,4,4))
     network = nn.batch_norm(nn.Deconv2DLayer(network, (batch_size,128,7,7), (4,4), stride=(1,1), pad='valid', W=Normal(0.05), nonlinearity=nn.relu))
     network = nn.batch_norm(nn.Deconv2DLayer(network, (batch_size,64,11,11), (5,5), stride=(1,1), pad='valid', W=Normal(0.05), nonlinearity=nn.relu))
     network = nn.batch_norm(nn.Deconv2DLayer(network, (batch_size,32,25,25), (5,5), stride=(2,2), pad='valid', W=Normal(0.05), nonlinearity=nn.relu))
@@ -88,7 +88,7 @@ def generator(input_var):
     return network
 
 # In[23]:
-def generator_input( batch_size=128,nlat=NLAT):
+def generator_input( batch_size,nlat=NLAT):
     samples=np.zeros((batch_size,nlat,1,1))
     for i in range(batch_size):
         sample=np.float32(np.random.randn(nlat))
@@ -109,7 +109,7 @@ weight_decay = 1e-5
 
 generator_params=lasagne.layers.get_all_params(generator_network, trainable=True)
 discriminator_params=lasagne.layers.get_all_params(discriminator_network, trainable=True)
-base_lr = 0.00003
+base_lr = 1e-3
 G_lr = theano.shared(lasagne.utils.floatX(base_lr))
 generator_updates = lasagne.updates.adam(generator_loss, generator_params, learning_rate=G_lr,  beta1=0.5)
 generator_train_fun=theano.function([z],generator_loss,updates=generator_updates,allow_input_downcast=True)
@@ -142,13 +142,14 @@ def iterate_minibatches(inputs, targets, batchsize, shuffle=False,flag=True):
             excerpt = slice(start_idx, start_idx + batchsize)
         yield inputs[excerpt], targets[excerpt]
 
-clamp_lower=-0.05
-clamp_upper=0.05
+clamp_lower=-0.02
+clamp_upper=0.02
 num_batches=xtrain.shape[0]/batch_size
 print 'Starting training ...'
 for i in range(num_epochs):
     print "training epoch",i
-    for batch in iterate_minibatches(xtrain, ytrain, batchsize=128, shuffle=True):
+    print(batch_size)
+    for batch in iterate_minibatches(xtrain, ytrain, batch_size, shuffle=True):
         xtrain_batch, ytrain_batch=batch
         z_batch=generator_input(batch_size, NLAT)
         discriminator_train_fun(xtrain_batch,z_batch)
@@ -159,23 +160,23 @@ for i in range(num_epochs):
         discriminator_params_values=lasagne.layers.get_all_param_values(discriminator_network, trainable=True)
         clamped_weights= [np.clip(w, clamp_lower, clamp_upper) for  w in discriminator_params_values]
         lasagne.layers.set_all_param_values(discriminator_network,clamped_weights, trainable=True)
-        z_batch=generator_input(128,NLAT)
+        z_batch=generator_input(batch_size,NLAT)
         generator_train_fun(z_batch)
     if i >= num_epochs // 2:
         progress = float(i) / num_epochs
         G_lr.set_value(lasagne.utils.floatX(base_lr*2*(1 - progress)))
         D_lr.set_value(lasagne.utils.floatX(base_lr*2*(1 - progress)))
     np.random.seed(i)
-    sampless = gen_fn(lasagne.utils.floatX(np.random.rand(100, NLAT,1,1)))
+    sampless = gen_fn(lasagne.utils.floatX(np.random.rand(batch_size, NLAT,1,1)))
     try:
         import matplotlib.pyplot as plt
     except ImportError:
         pass
     else:
         plt.imsave('mnist_samples'+str(i)+'.png',
-                    (sampless.reshape(10, 10, 28, 28)
+                    (sampless.reshape(8, 8, 28, 28)
                                .transpose(0, 2, 1, 3)
-                               .reshape(10*28, 10*28)),
+                               .reshape(8*28, 8*28)),
                     cmap='gray')
 
-    #recon_samples,revon_taget = iterate_minibatches(xtrain, ytrain, batchsize=100, shuffle=True, flag=False)
+    #recon_samples,rvon_taget = iterate_minibatches(xtrain, ytrain, batchsize=100, shuffle=True, flag=False)
