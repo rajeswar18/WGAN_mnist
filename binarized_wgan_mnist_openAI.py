@@ -71,18 +71,18 @@ def discriminator(input_var):
 
 
     return network
-NLAT=128
+NLAT=164
 def generator(input_var):
     network = lasagne.layers.InputLayer(shape=(None, NLAT,1,1),
                                         input_var=input_var)
 
-    network = ll.DenseLayer(network, num_units=4*4*128, W=Normal(0.05), nonlinearity=nn.relu)
+    network = ll.DenseLayer(network, num_units=4*4*64, W=Normal(0.05), nonlinearity=nn.relu)
     #print(input_var.shape[0])
-    network = ll.ReshapeLayer(network, (batch_size,128,4,4))
-    network = nn.batch_norm(nn.Deconv2DLayer(network, (batch_size,128,7,7), (4,4), stride=(1,1), pad='valid', W=Normal(0.05), nonlinearity=nn.relu))
-    network = nn.batch_norm(nn.Deconv2DLayer(network, (batch_size,64,11,11), (5,5), stride=(1,1), pad='valid', W=Normal(0.05), nonlinearity=nn.relu))
-    network = nn.batch_norm(nn.Deconv2DLayer(network, (batch_size,32,25,25), (5,5), stride=(2,2), pad='valid', W=Normal(0.05), nonlinearity=nn.relu))
-    network = nn.batch_norm(nn.Deconv2DLayer(network, (batch_size,1,28,28), (4,4), stride=(1,1), pad='valid', W=Normal(0.05), nonlinearity=sigmoid))
+    network = ll.ReshapeLayer(network, (batch_size,64,4,4))
+    network = nn.Deconv2DLayer(network, (batch_size,32,7,7), (4,4), stride=(1,1), pad='valid', W=Normal(0.05), nonlinearity=nn.relu)
+    network = nn.Deconv2DLayer(network, (batch_size,32,11,11), (5,5), stride=(1,1), pad='valid', W=Normal(0.05), nonlinearity=nn.relu)
+    network = nn.Deconv2DLayer(network, (batch_size,32,25,25), (5,5), stride=(2,2), pad='valid', W=Normal(0.05), nonlinearity=nn.relu)
+    network = nn.Deconv2DLayer(network, (batch_size,1,28,28), (4,4), stride=(1,1), pad='valid', W=Normal(0.05), nonlinearity=sigmoid)
 
     #network =lasagne.layers.Conv2DLayer(network, num_filters=1, filter_size=1, stride=1, nonlinearity=sigmoid)
     return network
