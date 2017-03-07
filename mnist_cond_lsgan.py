@@ -45,7 +45,7 @@ from theano.sandbox.rng_mrg import MRG_RandomStreams as RandomStreams
 import lasagne
 import lasagne.layers as ll
 from lasagne.init import (Normal, )
-from lasagne.layers import (ReshapeLayer, DropoutLayer,
+from lasagne.layers import (ReshapeLayer, DropoutLayer, MergeLayer,
                             ConcatLayer, ElemwiseSumLayer, GaussianNoiseLayer, )
 from lasagne.regularization import (regularize_layer_params, l2, )
 from lasagne.nonlinearities import (tanh,sigmoid                  )
@@ -91,80 +91,121 @@ num_epochs=100
 dsize=(None,1,28,28)
 out_size=10
 x=T.tensor4('inputs')
-Y=T.matrix('labels')
+Y=T.fmatrix('labels')
 z=T.tensor4('samples')
 ny=10
 
     # In[19]:
+
+
+class CondConvConcatLayer(MergeLayer):
+    """
+    Concatenates multiple inputs along the specified axis. Inputs should have
+    the same shape except for the dimension specified in axis, which can have
+    different sizes.
+    Parameters
+    -----------
+    incomings : a list of :class:`Layer` instances or tuples
+        The layers feeding into this layer, or expected input shapes
+    axis : int
+        Axis which inputs are joined over
+    cropping : None or [crop]
+        Cropping for each input axis. Cropping is described in the docstring
+        for :func:`autocrop`. Cropping is always disabled for `axis`.
+    """
+    def __init__(self, incomings, axis=1, cropping=None, **kwargs):
+        super(CondConvConcatLayer, self).__init__(incomings, **kwargs)
+        self.axis = axis
+        if cropping is not None:
+            # If cropping is enabled, don't crop on the selected axis
+            cropping = list(cropping)
+            cropping[axis] = None
+        self.cropping = cropping
+
+    def get_output_shape_for(self, input_shapes):
+
+        x = input_shapes[0]
+        y = input_shapes[1]
+        shape = (x[0], x[1] + y[1], x[2], x[3])
+
+        return shape
+
+    def get_output_for(self, inputs, **kwargs):
+        x = inputs[0]
+        y = inputs[1]
+        #y = y.shape()
+        y = y.dimshuffle(0, 1, 'x', 'x')
+        return T.concatenate([x, y*T.ones((x.shape[0], y.shape[1], x.shape[2], x.shape[3]))], axis=1)
+
+
+
 def discriminator(input_var,Y):
     yb = Y.dimshuffle(0, 1, 'x', 'x')
 
-    network = lasagne.layers.InputLayer(shape=(None, 1, 28, 28),
+    D_1 = lasagne.layers.InputLayer(shape=(None, 1, 28, 28),
                                         input_var=input_var)
-
-    network = conv_cond_concat(network, yb)
+    D_2 = lasagne.layers.InputLayer(shape=(None, 10),input_var=Y)
+    network=D_1
+    network_yb=D_2
+    network = CondConvConcatLayer([network,network_yb])
 
     network = ll.DropoutLayer(network, p=0.4)
 
     network = conv_layer(network, 3, 32, 1, 'same', nonlinearity=lrelu)
-    network = conv_cond_concat(network, yb)
+    network = CondConvConcatLayer([network,network_yb])
 
     network = conv_layer(network, 3, 64, 2, 'same', nonlinearity=lrelu)
-    network = conv_cond_concat(network, yb)
+    network = CondConvConcatLayer([network,network_yb])
 
     network = conv_layer(network, 3, 64, 2, 'same', nonlinearity=lrelu)
     #network = batch_norm(conv_layer(network, 3, 128, 1, 'same', nonlinearity=lrelu))
     #network = ll.DropoutLayer(network, p=0.2)
 
     network = conv_layer(network, 3, 128, 2, 'same', nonlinearity=lrelu)
-    network = conv_cond_concat(network, yb)
+    network = CondConvConcatLayer([network,network_yb])
 
     network = batch_norm(conv_layer(network, 4, 128, 1, 'valid', nonlinearity=lrelu))
-    network = conv_cond_concat(network, yb)
+    network = CondConvConcatLayer([network,network_yb])
 
     #network= DropoutLayer(network, p=0.5)
     network =conv_layer(network, 1, 1, 1, 'valid', nonlinearity=None)
 
-
-
-def conv_cond_concat(x, y):
-    """
-    concatenate conditioning vector on feature map axis
-    """
-    return T.concatenate([x, y*T.ones((x.shape[0], y.shape[1], x.shape[2], x.shape[3]))], axis=1)
-
-    return network
+    return network, D_1,D_2
 NLAT=128
 def generator(input_var,Y):
-    yb = Y.dimshuffle(0, 1, 'x', 'x')
-    network = lasagne.layers.InputLayer(shape=(None, NLAT,1,1),
-                                        input_var=input_var)
+    yb = Y#.dimshuffle(0, 1, 'x', 'x')
+    G_1 = lasagne.layers.InputLayer(shape=(None, NLAT,1,1),input_var=input_var)
 
-    network = batch_norm(conv_layer(network, 1, 4 * 4 * 128, 1, 'valid'))
+    G_2 = lasagne.layers.InputLayer(shape=(None, 10),input_var=Y)
+    network=G_1
+    network_yb=G_2
+
+    network = conv_layer(network, 1, 4 * 4 * 128, 1, 'valid')
     #print(input_var.shape[0])
     network = ll.ReshapeLayer(network, (-1, 128, 4, 4))
-    network = conv_cond_concat(network, yb)
-    network = resnet_block(network, 3,128)
-    network = conv_cond_concat(network, yb)
+
+    network = CondConvConcatLayer([network,network_yb])
+    network = resnet_block(network, 3,138)
+    network = CondConvConcatLayer([network,network_yb])
 
     #network = resnet_block(network, 3, 128)
     network = BilinearUpsampling(network, ratio=2)
-    network = batch_norm(conv_layer(network, 3,128, 1, 'same'))
-    network = conv_cond_concat(network, yb)
+    network = batch_norm(conv_layer(network, 3,138, 1, 'same'))
+    network = CondConvConcatLayer([network,network_yb])
 
-    network = resnet_block(network, 3, 128)
-    network = conv_cond_concat(network, yb)
+    network = resnet_block(network, 3, 148)
+    network = CondConvConcatLayer([network,network_yb])
 
     network = BilinearUpsampling(network, ratio=2)
     network = batch_norm(conv_layer(network, 3, 32, 1, 'valid'))
     network = BilinearUpsampling(network, ratio=2)
     network = batch_norm(conv_layer(network, 3, 32, 1, 'same'))
-    network = conv_cond_concat(network, yb)
+    network = CondConvConcatLayer([network,network_yb])
 
     #network =  resnet_block(network, 3, 32)
     network = conv_layer(network, 1, 1, 1, 'valid', nonlinearity=sigmoid)
     #network =lasagne.layers.Conv2DLayer(network, num_filters=1, filter_size=1, stride=1, nonlinearity=sigmoid)
-    return network
+    return network, G_1,G_2
 
 # In[23]:
 def generator_input( batch_size,nlat=NLAT):
@@ -179,10 +220,10 @@ def generator_input( batch_size,nlat=NLAT):
 
 
 print 'Compiling functions ...'
-generator_network = generator(z,Y)
-discriminator_network=discriminator(x,Y)
+generator_network, G_1,G_2 = generator(z,Y)
+discriminator_network,D_1,D_2=discriminator(x,Y)
 D1=lasagne.layers.get_output(discriminator_network)
-D2=lasagne.layers.get_output(discriminator_network,lasagne.layers.get_output(generator_network))
+D2=lasagne.layers.get_output(discriminator_network,{D_1:lasagne.layers.get_output(generator_network),D_2:Y})
 
 #discriminator_loss=-0.5*((D1-D2).mean())
 #generator_loss=-0.5*(D2.mean())
@@ -241,7 +282,7 @@ for i in range(num_epochs):
     minibatch_disc_losses = []
     for batch in iterate_minibatches(xtrain, ytrain, batch_size, shuffle=True):
         xtrain_batch, ytrain_batch=batch
-        ytrain_batch = floatX(OneHot(ytrain_batch, ny))
+        ytrain_batch = lasagne.utils.floatX(OneHot(ytrain_batch, ny))
         z_batch=generator_input(batch_size, NLAT)
         minibatch_loss=discriminator_train_fun(xtrain_batch,z_batch,ytrain_batch)
         minibatch_disc_losses.append(minibatch_loss)
@@ -263,7 +304,7 @@ for i in range(num_epochs):
         G_lr.set_value(lasagne.utils.floatX(base_lr*2*(1 - progress)))
         D_lr.set_value(lasagne.utils.floatX(base_lr*2*(1 - progress)))
     np.random.seed(i)
-    sampless = gen_fn(lasagne.utils.floatX(np.random.rand(batch_size, NLAT,1,1)), floatX(OneHot(np.asarray([[i for _ in range(10)] for i in range(10)]).flatten(), ny)))
+    sampless = gen_fn(lasagne.utils.floatX(np.random.rand(batch_size, NLAT,1,1)), lasagne.utils.floatX(OneHot(np.asarray([[j for _ in range(10)] for j in range(10)]).flatten(), ny)))
     try:
         import matplotlib.pyplot as plt
     except ImportError:
